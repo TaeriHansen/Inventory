@@ -1,0 +1,270 @@
+CLASS y3cl_invt_sel DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    TYPES:
+      BEGIN OF ty_input_params,
+        t_matnr TYPE RANGE OF mard-matnr,
+        t_werks TYPE RANGE OF mard-werks,
+        t_lgort TYPE RANGE OF mard-lgort,
+        t_matkl TYPE RANGE OF mara-matkl,
+        v_test  TYPE boolean,
+      END OF ty_input_params.
+*      BEGIN OF ty_sel_source,
+*        matnr TYPE mard-matnr,
+*      END OF ty_sel_source.
+
+
+    DATA: mt_matnr TYPE RANGE OF mard-matnr,
+          mt_werks TYPE RANGE OF mard-werks,
+          mt_lgort TYPE RANGE OF mard-lgort,
+          mt_matkl TYPE RANGE OF mara-matkl,
+          mv_test  TYPE boolean,
+          mt_sel   TYPE y3invt_sel_tt.
+
+    METHODS: constructor
+      IMPORTING
+        is_input_params TYPE ty_input_params
+      RAISING
+        ycx_invt_excep.
+
+    METHODS: run
+      RAISING
+        ycx_invt_excep.
+
+    METHODS: read_sel
+      RETURNING
+        VALUE(rt_sel) TYPE y3invt_sel_tt
+      RAISING
+        ycx_invt_excep.
+
+  PROTECTED SECTION.
+
+    METHODS: delete
+      RAISING
+        ycx_invt_excep.
+
+    METHODS: update
+      RAISING
+        ycx_invt_excep.
+
+    METHODS: commit
+      IMPORTING
+        iv_wait TYPE flag
+      RAISING
+        ycx_invt_excep.
+
+    METHODS: rollback
+      RAISING
+        ycx_invt_excep.
+
+
+    METHODS: read_source
+      RAISING
+        ycx_invt_excep.
+
+    METHODS output
+      RAISING
+        ycx_invt_excep.
+    METHODS output_text
+      RAISING
+        ycx_invt_excep.
+
+    METHODS output_alv
+      RAISING
+        ycx_invt_excep.
+
+  PRIVATE SECTION.
+ENDCLASS.
+
+
+
+CLASS y3cl_invt_sel IMPLEMENTATION.
+
+
+  METHOD commit.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = iv_wait.    " Use of Command `COMMIT AND WAIT`
+
+  ENDMETHOD.
+
+
+  METHOD constructor.
+
+    mt_matnr = is_input_params-t_matnr.
+    mt_werks = is_input_params-t_werks.
+    mt_lgort = is_input_params-t_lgort.
+    mt_matkl = is_input_params-t_matkl.
+    mv_test = is_input_params-v_test.
+
+  ENDMETHOD.
+
+
+  METHOD delete.
+
+    IF mv_test = abap_false.
+      DELETE FROM y3invt_sel
+        WHERE autoselected = abap_true.
+
+      IF sy-subrc <> 0.
+        rollback( ).
+      ELSE.
+        commit( abap_true ).
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+  METHOD output.
+    IF sy-batch = abap_true.
+      output_text( ).
+    ELSE.
+      output_alv( ).
+    ENDIF.
+
+  ENDMETHOD.
+
+
+  METHOD output_alv.
+
+    TRY.
+        cl_salv_table=>factory(
+          IMPORTING
+            r_salv_table = DATA(lo_alv)
+          CHANGING
+            t_table = mt_sel ).
+
+      CATCH cx_salv_msg INTO DATA(lcx_salv_msg).
+        DATA(lv_msg) = lcx_salv_msg->get_text( ).
+        RAISE EXCEPTION TYPE ycx_invt_excep
+          EXPORTING
+            textid   = ycx_invt_excep=>alv_error
+            mv_text1 = lv_msg.
+
+        RETURN.
+    ENDTRY.
+
+    TRY.
+        lo_alv->get_columns( )->set_optimize( ).
+        lo_alv->get_columns( )->get_column( 'MANDT' )->set_visible( if_salv_c_bool_sap=>false ).
+        lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
+        lo_alv->get_functions( )->set_all( ).
+        lo_alv->display( ).
+      CATCH cx_salv_not_found INTO DATA(lcx_salv_not_found).
+        lv_msg = lcx_salv_not_found->get_text( ).
+        RAISE EXCEPTION TYPE ycx_invt_excep
+          EXPORTING
+            textid   = ycx_invt_excep=>alv_error
+            mv_text1 = lv_msg.
+    ENDTRY.
+
+  ENDMETHOD.
+
+
+  METHOD output_text.
+    DATA: lv_mat_sel(61) TYPE c.
+
+    DATA(lv_lines) = lines( mt_sel ).
+    WRITE: / 'Materials selected: '(t01), lv_lines.
+
+    LOOP AT mt_sel ASSIGNING FIELD-SYMBOL(<ls_sel>).
+      CLEAR: lv_mat_sel.
+
+      lv_mat_sel =  <ls_sel>-matnr.
+      lv_mat_sel+19(40) = <ls_sel>-maktx.
+      lv_mat_sel+60(1) = <ls_sel>-autoselected.
+      WRITE: / lv_mat_sel.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+  METHOD read_sel.
+
+    SELECT * FROM y3invt_sel INTO TABLE rt_sel.         "#EC CI_NOWHERE
+
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE ycx_invt_excep
+        EXPORTING
+          textid = ycx_invt_excep=>no_data_y3invt_sel.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+  METHOD read_source.
+
+    DATA: mt_mstae TYPE RANGE OF mara-mstae.
+
+* exclude Cross-Plant Material Status 94 & 95
+    mt_mstae =  VALUE #(
+      ( sign = 'E' option = 'EQ' low = '94' )
+      ( sign = 'E' option = 'EQ' low = '95' ) ).
+
+    SELECT mard~mandt mard~matnr makt~maktx INTO CORRESPONDING FIELDS OF TABLE mt_sel
+        FROM mard AS mard
+        INNER JOIN makt ON makt~matnr = mard~matnr
+        INNER JOIN mara ON mara~matnr = makt~matnr
+        WHERE mard~matnr IN mt_matnr
+          AND mard~werks IN mt_werks
+          AND mard~lgort IN mt_lgort
+          AND mard~labst > 0
+          AND makt~spras = 'E'
+          AND mara~matkl IN mt_matkl
+          AND mara~mtpos_mara = 'NORM'
+          AND mara~mstae IN mt_mstae.
+
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE ycx_invt_excep
+        EXPORTING
+          textid = ycx_invt_excep=>no_data_mard.
+    ENDIF.
+
+    SORT mt_sel ASCENDING BY matnr.
+    DELETE ADJACENT DUPLICATES FROM mt_sel COMPARING matnr.
+
+  ENDMETHOD.
+
+
+  METHOD rollback.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+  ENDMETHOD.
+
+
+  METHOD run.
+
+    delete( ).
+    update( ).
+    output( ).
+
+  ENDMETHOD.
+
+
+  METHOD update.
+
+    read_source( ).
+
+    LOOP AT mt_sel ASSIGNING FIELD-SYMBOL(<ls_sel>).
+      <ls_sel>-autoselected = abap_true.
+    ENDLOOP.
+
+
+    IF mv_test = abap_false.
+      MODIFY y3invt_sel FROM TABLE mt_sel.
+      IF sy-subrc <> 0.
+        rollback( ).
+      ELSE.
+        commit( abap_true ).
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+ENDCLASS.
